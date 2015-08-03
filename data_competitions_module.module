@@ -1,0 +1,1949 @@
+<?php
+
+// Get the metrics.php file in order to use its functions
+require_once('metrics.php');
+
+/**
+ * Implementation of the help hook. Add help information here.
+ */
+function data_competitions_help($path, $arg) {
+	$output = '';
+	switch ($path) {
+		case "admin/help#data_competitions":
+			$output = '<p>' . t("Data Competitions Help...") . '</p>';
+			break;
+	}
+	return $output;
+}
+/*
+function data_competitions_hook_info() {
+    return array(
+        'data_competitions' => array(
+            'data_competitions' => array(
+                'competition_changed' => array(
+                    'runs when' => t('A competition has been updated.'),
+                ),
+            ),
+        ),
+    );
+}
+
+function data_competitions_data_competitions($op, $user) {
+    if (!in_array($op, array('competition_changed'))) {
+        return;
+    }
+    $aids = _trigger_get_hook_aids('data_competitions', $op);
+    $context = array(
+        'hook' => 'data_competitions',
+        'op' => $op,
+        'user' => $user,
+    );
+    actions_do(array_keys($aids), $user, $context);
+}
+
+function data_competitions_action_info_alter(&$info) {
+
+  // Loop through each action.
+  foreach ($info as $type => $data) {
+
+    // Only add our trigger to node or system actions.
+    if (stripos($type, "node_") === 0 || stripos($type, "system_") === 0) {
+
+      // Don't remove any triggers that are already added to the approved list.
+      if (isset($info[$type]['hooks']['application'])) {
+        $info[$type]['hooks']['data_competitions'] = array_merge($info[$type]['hooks']['data_competitions'], array('competition_changed'));
+      }
+
+      // Add our trigger to the approved list of hooks.
+      else {
+        $info[$type]['hooks']['data_competitions'] = array('competition_changed');
+      }
+    }
+  }
+}
+*/
+
+/**
+ * Valid permissions for this module
+ * @return array An array of valid permissions for the data_competitions module
+ */
+function data_competitions_perm() {
+	return array('access data_competitions', 'submit solutions', 'administer data_competitions');
+}
+
+/**
+ * Form used to reset the module.
+ */
+function reset_form() {
+	$form = array();
+
+    $form['resetcheck'] = array(
+        '#type' => 'checkbox',
+		'#title' => t('Would you like to reset the module?'),
+		'#required' => FALSE,
+    );
+
+	$form['submit'] = array(
+		'#type' => 'submit',
+		'#value' => t('Reset'),
+	);
+
+	return $form;
+}
+
+/**
+ * Handle the reset_form submission
+ */
+function reset_form_submit($form, &$form_state) {
+  
+    if ($form_state['values']['resetcheck']) {
+        // Uninstall the module including data directories
+        $datapath = file_directory_path() . '/upload_data';
+        $solutionpath = file_directory_path() . '/upload_solutions';
+        $instructionspath = file_directory_path() . '/data_set_instructions';
+
+	    drupal_uninstall_schema('data_competitions');
+
+    	deleteDir($datapath);
+    	deleteDir($solutionpath);
+        deleteDir($instructionspath);
+
+        // Reinstall the module
+
+        drupal_install_schema('data_competitions');
+        db_query("DELETE FROM {cache}");
+
+    	mkdir($datapath);
+    	mkdir($solutionpath);
+        mkdir($instructionspath);
+
+        $instructionsfilename = $instructionspath . '/template.csv';
+
+        $finstructions = fopen($instructionsfilename, "w");
+        $instructionscontents = "Column 1 Header,Column 2 Header,,Column 3 Header,Column 4 Header,etc\nLabel 1,Label 2,|,Data 1,Data 2,etc.\nLabel 3,Label 4,|,Data 3, Data 4, etc.\nFor AUC\nLabel 1,Label 2,break,Label 3,Label 4,etc.\n";
+
+        fputs($finstructions, $instructionscontents);
+
+        fclose($finstructions);
+        
+    }
+}
+
+/**
+ * Create data competitions form. Used to create a data competition.
+ */
+function create_form($form_state) {
+    // First step. Includes: name, description, deadline (if applicable), data, and other files.
+    if(empty($form_state['storage']['values'])) {
+    	$form['#attributes'] = array(
+    		'enctype' => "multipart/form-data"
+    	);
+
+    	$form['name'] = array(
+    		'#type' => 'textfield',
+    		'#title' => t('Competition Name'),
+    		'#required' => TRUE,
+    	);
+
+    	$form['description'] = array(
+    		'#type' => 'textarea',
+    		'#title' => t('Brief Description'),
+    		'#required' => TRUE,
+    	);
+        /*
+    	$form['deadline'] = array(
+    		'#type' => 'date',
+    		'#title' => t('Preferred Competition Deadline'),
+    		'#required' => FALSE,
+    	);
+
+    	$form['deadlinecheck'] = array(
+    		'#type' => 'checkbox',
+    		'#title' => t('Would you like to set a competition deadline?'),
+    		'#required' => FALSE,
+    	);
+        */
+
+    	$form['data'] = array(
+    		'#type' => 'file',
+    		'#title' => t('Your Data Set (csv files only)'), // this is usually necessary.
+    	);
+
+        // Initialize the instruction path and display a link to the file on the page.
+        $instructionspath = file_directory_path() . '/data_set_instructions';
+
+        $form['instructions'] = array(
+            '#type' => 'markup',
+            '#value' => t('<b>Please follow these instructions to set up your raw data files: </b>') /*. addLink($instructionspath, 'Instructions')*/ .
+                '<ul>
+                    <li>Set up a csv file with a header for each column with data</li>
+                    <li>Each column is a class or label</li>
+                    <li>Each row is an observation or sample</li>
+                    <li>The prediction/label set must begin in the first column and be in adjacent columns</li>
+                    <li>End your prediction set with a pipe: ' . "'|'" . '</li>
+                    <li>Note: if you want to use Area Under Curve as a metric, please add a ' . "'break'" . ' after each grouping
+                    <li>' . addLink($instructionspath, 'Example') . '
+                </ul>',
+        );
+
+        $form['other'] = array(
+        	'#type' => 'file',
+    		'#title' => t('Other Files (e.g. submission example | Use a zip folder)'), // this is usually necessary.
+    	);
+
+    }
+
+    // Second step. Includes: selecting which column is the prediction set,
+    // the percentage of the data which should be in the test set, and what type of problem it is
+    else if ($form_state['storage']['values']['step'] == 2) {
+        /*
+        $columns = $form_state['storage']['values']['columns'];
+
+        $form['predictionstart'] = array(
+            '#type' => 'select',
+        	'#title' => t('Which column is at the start of the prediction set?'),
+        );
+
+        foreach ($columns as $column_num => $column) {
+            $form['predictionstart']['#options'][$column_num] = $column;
+        }
+
+        $form['predictionend'] = array(
+            '#type' => 'select',
+            '#title' => t('Which column is at the end of the prediction set?'),
+        );
+
+        $form['predictionend']['#options']['Same'] = 'Same';
+
+        foreach ($columns as $column_num => $column) {
+            $form['predictionend']['#options'][$column_num] = $column;
+        }
+        */
+
+        $form['percenttest'] = array(
+            '#type' => 'select',
+    		'#title' => t('What percentage of your data set would you like as the test set? Will default to 25%'),
+            '#options' => array(
+                5 => t('5%'),
+                15 => t('15%'),
+                25 => t('25%'),
+                35 => t('35%'),
+                45 => t('45%'),
+                55 => t('55%'),
+                65 => t('65%'),
+                75 => t('75%'),
+                85 => t('85%'),
+                95 => t('95%'),
+
+            ),
+            '#default_value' => 25,
+    	);
+
+        $form['type'] = array(
+            '#type' => 'select',
+            '#title' => t('What type of problem does your competition involve?'),
+            '#options' => array(
+                1 => t('Regression'),
+                2 => t('Classification'),
+            ),
+        );
+    }
+
+    // Third step. Includes: selecting which metric to use to score solutions.
+    else if ($form_state['storage']['values']['step'] == 3) {
+        $form['metric'] = array(
+            '#type' => 'select',
+            '#title' => t('Select the metric to evaluate solutions to your competition.'),
+        );
+
+        if ($form_state['storage']['values']['type'] == 1){
+            $form['metric']['#options'] = array(
+                1 => t('Absolute Error'),
+                2 => t('Mean Absolute Error'),
+                3 => t('Root Mean Squared Error'),
+                4 => t('Root Mean Squared Logarithmic Error'),
+            );
+        }
+
+        else {
+            $form['metric']['#options'] = array(
+                5 => t('Logarithmic Loss'),
+                6 => t('Area Under Curve'),
+                7 => t('Mean F Score'),
+                8 => t('Mean Consequential Error'),
+                9 => t('Mean Average Precision at n'),
+                10 => t('Multi Class Log Loss'),
+                11 => t('Hamming Loss'),
+            );
+        }
+    }
+
+	$form['submit'] = array(
+		'#type' => 'submit',
+		'#value' => t('Submit'), // t()
+	);
+
+	return $form;
+}
+
+/**
+ * Handle create_form submit
+ */
+function create_form_submit($form, &$form_state) {
+	global $user;
+
+    // First step
+    if (empty($form_state['storage']['values'])) {
+    	$datapath = file_directory_path() . '/upload_data/';
+
+        //define limits for the raw data submission
+        $limitscsv = array (
+            'extensions' => 'csv',
+            //'file_size' => 1000000, //Integer value in bytes
+        );
+
+        // Validate the file extension and size
+        $validatorscsv = array(
+            'file_validate_extensions' => array($limitscsv['extensions']),
+            //'file_validate_size' => array($limitscsv['file_size']),
+        );
+
+        //define limits for the other data submission
+        $limitszip = array (
+            'extensions' => 'zip',
+            //'file_size' => 1000000, //Integer value in bytes
+        );
+
+        // Validate the file extension and size
+        $validatorszip = array(
+            'file_validate_extensions' => array($limitszip['extensions']),
+            //'file_validate_size' => array($limitszip['file_size']),
+        );
+
+    	$today = getdate();
+
+        // Set up the database entry for the submission
+    	$table = 'competitions';
+        $newcompetition = array(
+            'timestamp' => date(DATE_ATOM, mktime($today['hours'],
+                $today['minutes'], $today['seconds'],
+                $today['mon'], $today['mday'], $today['year'])),
+            'uid' => $user->uid,
+            'uname' => $user->name,
+            'cname' => $form_state['values']['name'],
+            'cdescription' => $form_state['values']['description'],
+        );
+
+        // Check whether a deadline is desired
+        if ($form_state['values']['deadlinecheck']) {
+            $newcompetition['cdeadline'] = date(DATE_ATOM, mktime(0, 0, 0,
+                $form_state['values']['deadline']['month'],
+                $form_state['values']['deadline']['day'],
+                $form_state['values']['deadline']['year']));
+        }
+
+        // Write the submission onto the database
+        if (drupal_write_record($table, $newcompetition)) {
+    		drupal_set_message(t('Competition has been created.'));
+
+            // Define all datapaths and create the directories
+            $datapath .= $newcompetition['cid'];
+            $rawpath = $datapath . "/raw";
+            $trainingpath = $datapath . "/training";
+            $predictionpath = $datapath . "/prediction";
+            $testingpath = $datapath . "/testing";
+            $otherpath = $datapath . "/other";
+            mkdir($datapath);
+            mkdir($rawpath);
+            mkdir($trainingpath);
+            mkdir($testingpath);
+            mkdir($predictionpath);
+            mkdir($otherpath);
+
+            // Save the file onto the server and check whether it was saved
+            if ($fileraw = file_save_upload('data', $validatorscsv, $rawpath, FILE_EXISTS_ERROR)) {
+                file_set_status($fileraw, FILE_STATUS_PERMANENT);
+
+                // Add values to be stored and allow the form to be rebuilt for second step
+                $form_state['storage']['values'] = $form_state['values'];
+                $form_state['rebuild'] = TRUE;
+                $form_state['storage']['values']['cid'] = $newcompetition['cid'];
+
+                // Find the path where the raw data was saved and open the file
+                $rawfilepath = $rawpath . '/' . $fileraw->filename;
+                $lines = file($rawfilepath);
+                $columns = explode(",", $lines[0]);
+
+                // Save the column names for step 2 of the form
+                /*foreach ($columns as $column_num => $column) {
+                    $form_state['storage']['values']['columns'][$column_num] = $column;
+                }*/
+
+                // Store more values for the second step
+                $form_state['storage']['values']['datapath'] = $datapath;
+                $form_state['storage']['values']['fileraw'] = $fileraw->filename;
+                $form_state['storage']['values']['step'] = 2;
+            }
+
+            // Save the other files and check whether it was successful
+            if ($fileother = file_save_upload('other', $validatorszip, $otherpath, FILE_EXISTS_ERROR)) {
+                file_set_status($fileother, FILE_STATUS_PERMANENT);
+            }
+    	}
+        else {
+    	    drupal_set_message(t('There was an error processing your request.'), 'error');
+	    }
+    }
+
+    // Step 2
+    else if ($form_state['storage']['values']['step'] == 2) {
+        // Store values for step 3
+        $form_state['storage']['values']['step'] = 3;
+        $form_state['storage']['values']['type'] = $form_state['values']['type'];
+        $datapath = $form_state['storage']['values']['datapath'];
+        $fileraw = $form_state['storage']['values']['fileraw'];
+
+        // Define filepaths for splitting up the data
+        $rawpath = $datapath . "/raw";
+        $trainingpath = $datapath . "/training";
+        $predictionpath = $datapath . "/prediction";
+        $testingpath = $datapath . "/testing";
+        $otherpath = $datapath . "/other";
+
+        $rawfilepath = $rawpath . '/' . $fileraw;
+
+        // Set filepaths for the rest of the files
+        $trainingfilename = $trainingpath . "/training.csv";
+        $testingfilename = $testingpath . "/testing.csv";
+        $predictionfilename = $predictionpath . "/testing.csv";
+
+        // Open the files for writing
+        $ftraining = fopen ($trainingfilename, "w");
+        $ftesting = fopen ($testingfilename, "w");
+        $fprediction = fopen ($predictionfilename, "w");
+
+        // Initialize the file contents
+        $trainingcontents = "";
+        $testingcontents = "";
+        $predictioncontents = "";
+
+        // Get array of all lines in the raw data set
+        $lines = file($rawfilepath);
+
+        // Set column headers in all files
+        $trainingcontents .= $lines[0];
+        $testingcontents .= $lines[0];
+        $predictioncontents .= $lines[0];
+
+        // Remove headers from $lines array
+        unset($lines[0]);
+
+        // Find count of remaining lines
+        $count = count($lines);
+
+        // Get array of which lines to select for testing set
+        $percent = $form_state['values']['percenttest']/100;
+        $set = array_rand($lines, (int) ($count*$percent) );
+
+        // Set value of the prediction area
+        /*
+        $predictionstart = $form_state['values']['predictionstart'];
+        $predictionend = $form_state['values']['predictionend'];
+
+        if ($predictionend == 'same' || $predictionend < $predictionstart) {
+            $predictionend = $predictionstart;
+        }
+        */
+        $predictionstart = 0;
+        $predictionend = $predictionstart;
+
+        $predictionset = explode(",", $lines[0]);
+        for ($i = 0; $i < count($predictionset); $i++) {
+            if ($predictionset[$i] == "|") {
+                $predictionend = $i;
+            }
+        }
+
+        $predictionend++;
+
+        // Loop through $lines array and add data to correct file
+        foreach ($lines as $line_num => $line) {
+            if (in_array($line_num, $set)) {
+                $testingcontents .= $line;
+                $columns = explode(",", $line);
+
+                for ($i = $predictionstart; $i <= $predictionend; $i++) {
+                    $columns[$i] = '';
+                }
+
+                $linecorrect = implode(",", $columns);
+
+                $predictioncontents .= $linecorrect;
+            }
+            else {
+                $trainingcontents .= $line;
+            }
+        }
+
+        // Put the contents
+        fputs($ftraining, $trainingcontents);
+        fputs($ftesting, $testingcontents);
+        fputs($fprediction, $predictioncontents);
+
+        fclose($ftraining);
+        fclose($ftesting);
+        fclose($fprediction);
+
+        // Update the competition tuple
+        $table = 'competitions';
+        $updatedcompetition = array(
+            'cid' => $form_state['storage']['values']['cid'],
+            'predictionstart' => $predictionstart,
+            'predictionend' => $predictionend,
+        );
+        if (drupal_write_record($table, $updatedcompetition, 'cid')) {
+            drupal_set_message(t('Data files created successfully.'));
+        }
+        else {
+            drupal_set_message(t('There was an error processing your request.'), 'error');
+        }
+    }
+
+    // Step 3
+    else if ($form_state['storage']['values']['step'] == 3) {
+        // Update competitions tuple with metric for solution evaluation
+        $table = 'competitions';
+        $updatedcompetition = array(
+            'cid' => $form_state['storage']['values']['cid'],
+            'metric' => $form_state['values']['metric'],
+        );
+        if (drupal_write_record($table, $updatedcompetition, 'cid')) {
+            drupal_set_message(t('Metric selected succesfully.'));
+        }
+        else {
+            drupal_set_message(t('There was an error processing your request.'), 'error');
+        }
+
+        // Set null so form can be reset
+        $form_state['storage']['values'] = null;
+    }
+    else {
+        drupal_set_message(t('There was an error. Please check back later.'), 'error');
+    }
+
+}
+
+/**
+ * Edit competition form. Used to edit a competition.
+ */
+function edit_form($form_state) {
+    // Get the cid of the competition
+	$cid = getLastPathSegment($_SERVER['REQUEST_URI']);
+
+    // Get the competition data
+	$query = "SELECT * FROM {competitions} WHERE cid=" . $cid;
+	$queryResult =  db_query($query);
+	$tuple = db_fetch_object($queryResult);
+
+    // Step 1. Same as create form but checks whether user wants to edit.
+    if(empty($form_state['storage']['values'])) {
+        drupal_set_message($form_state['storage']['values']['datacheck']);
+    	$form['#attributes'] = array(
+    		'enctype' => "multipart/form-data"
+    	);
+
+    	$form['name'] = array(
+    		'#type' => 'textfield',
+    		'#default_value' => $tuple->cname,
+    		'#title' => t('Competition Name'),
+    		'#required' => TRUE,
+    	);
+
+    	$form['description'] = array(
+    		'#type' => 'textarea',
+    		'#default_value' => $tuple->cdescription,
+    		'#title' => t('Brief Description'),
+    		'#required' => TRUE,
+    	);
+
+        /*
+    	$form['deadline'] = array(
+    		'#type' => 'date',
+    		'#title' => t('Preferred Competition Deadline'),
+    		'#required' => FALSE,
+    	);
+
+    	$form['deadlinecheck'] = array(
+    		'#type' => 'checkbox',
+    		'#title' => t('Would you like to update your competition deadline?'),
+    		'#required' => FALSE,
+    	);
+        */
+
+        $form['data'] = array(
+    		'#type' => 'file',
+    		'#title' => t('Your Data Set (csv files only)'), // this is usually necessary.
+    	);
+
+        // Initialize the instruction path and display a link to the file on the page.
+        $instructionspath = file_directory_path() . '/data_set_instructions';
+
+        $form['instructions'] = array(
+            '#type' => 'markup',
+            '#value' => t('<b>Please follow these instructions to set up your raw data files: </b>') /*. addLink($instructionspath, 'Instructions')*/ .
+                '<ul>
+                    <li>Set up a csv file with a header for each column with data</li>
+                    <li>Each column is a class or label</li>
+                    <li>Each row is an observation or sample</li>
+                    <li>The prediction/label set must begin in the first column and be in adjacent columns</li>
+                    <li>End your prediction set with a pipe: ' . "'|'" . '</li>
+                    <li>' . addLink($instructionspath, 'Example') . '
+                </ul>',
+        );
+
+        $form['datacheck'] = array(
+        	'#type' => 'checkbox',
+    		'#title' => t('<b>Check here and upload a file if you would like to update your data set.</b><br><br><hr><br>'),
+    		'#required' => FALSE,
+    	);
+
+        $form['other'] = array(
+        	'#type' => 'file',
+    		'#title' => t('Other Files (e.g. submission example | Use a zip folder)'), // this is usually necessary.
+    	);
+
+    	$form['othercheck'] = array(
+    		'#type' => 'checkbox',
+    		'#title' => t('<b>Check here and upload a file if you would like to update your other files.</b><br><br><hr><br>'),
+    		'#required' => FALSE,
+    	);
+
+        $form['metriccheck'] = array(
+            '#type' => 'checkbox',
+            '#title' => t('<b>Check here if you ONLY want to update your evaluation metric.</b><br><br><hr><br>'),
+            '#required' => FALSE,
+        );
+
+        $form['deletecheck'] = array(
+            '#type' => 'checkbox',
+            '#title' => t('<b>Check here if you would like to DELETE this competition.</b>'),
+            '#required' => FALSE,
+        );
+    }
+
+    // Step 2. Same as create form.
+    else if ($form_state['storage']['values']['step'] == 2) {
+        /*
+        $columns = $form_state['storage']['values']['columns'];
+
+        $form['predictionstart'] = array(
+            '#type' => 'select',
+            '#title' => t('Which column is at the start of the prediction set?'),
+        );
+
+        foreach ($columns as $column_num => $column) {
+            $form['predictionstart']['#options'][$column_num] = $column;
+        }
+
+        $form['predictionend'] = array(
+            '#type' => 'select',
+            '#title' => t('Which column is at the end of the prediction set?'),
+        );
+
+        $form['predictionend']['#options']['Same'] = 'Same';
+
+        foreach ($columns as $column_num => $column) {
+            $form['predictionend']['#options'][$column_num] = $column;
+        }
+        */
+
+        //$form_state['storage']['values']['datapath'] = $form_state['my_data']['datpath'];
+
+        $form['percenttest'] = array(
+            '#type' => 'select',
+    		'#title' => t('What percentage of your data set would you like as the test set? Will default to 25%'),
+            '#options' => array(
+                5 => t('5%'),
+                15 => t('15%'),
+                25 => t('25%'),
+                35 => t('35%'),
+                45 => t('45%'),
+                55 => t('55%'),
+                65 => t('65%'),
+                75 => t('75%'),
+                85 => t('85%'),
+                95 => t('95%'),
+
+            ),
+            '#default_value' => 25,
+    	);
+
+        $form['type'] = array(
+            '#type' => 'select',
+            '#title' => t('What type of problem does your competition involve?'),
+            '#options' => array(
+                1 => t('Regression'),
+                2 => t('Classification'),
+            ),
+        );
+    }
+
+    // Step 2.5. Edit metric only.
+    else if ($form_state['storage']['values']['step'] == 2.5) {
+        $form['type'] = array(
+            '#type' => 'select',
+            '#title' => t('What type of problem does your competition involve?'),
+            '#options' => array(
+                1 => t('Regression'),
+                2 => t('Classification'),
+            ),
+        );
+    }
+
+    // Step 3. Same as create form.
+    else if ($form_state['storage']['values']['step'] == 3) {
+        $form['metric'] = array(
+            '#type' => 'select',
+            '#title' => t('Select the metric to evaluate solutions to your competition.'),
+        );
+
+        if ($form_state['storage']['values']['type'] == 1){
+            $form['metric']['#options'] = array(
+                1 => t('Absolute Error'),
+                2 => t('Mean Absolute Error'),
+                3 => t('Root Mean Squared Error'),
+                4 => t('Root Mean Squared Logarithmic Error'),
+            );
+        }
+
+        else {
+            $form['metric']['#options'] = array(
+                5 => t('Logarithmic Loss'),
+                6 => t('Area Under Curve'),
+                7 => t('Mean F Score'),
+                8 => t('Mean Consequential Error'),
+                9 => t('Mean Average Precision at n'),
+                10 => t('Multi Class Log Loss'),
+                11 => t('Hamming Loss'),
+            );
+        }
+    }
+
+	$form['submit'] = array(
+		'#type' => 'submit',
+		'#value' => t('Update'), // t()
+	);
+
+	return $form;
+}
+
+/**
+ * Handle edit_form submit.
+ */
+function edit_form_submit($form, &$form_state) {
+    // Get cid of competition.
+	$cid = getLastPathSegment($_SERVER['REQUEST_URI']);
+
+    // If user wishes to delete, remove competition from database and
+    // delete all file directories associated with that comeptition.
+    if ($form_state['values']['deletecheck']) {
+        $query = "DELETE FROM {competitions} WHERE cid=" . $cid;
+       if ($queryResult = db_query($query)) {
+          $datapath = file_directory_path() . '/upload_data/';
+          $datapath .= $cid;
+          deleteDir($datapath);
+          drupal_set_message(t('Competition has been deleted.'));
+
+          $query2 = "SELECT * FROM {solutions} WHERE cid=" . $cid;
+          $queryResult2 = db_query($query2);
+          while ($tuple = db_fetch_object($queryResult2)) {
+            $solutionpath = file_directory_path() . '/upload_solutions/';
+            $solutionpath .= $tuple->sid;
+            deleteDir($solutionpath);
+          }
+          
+          $query3 = "SELECT * FROM {solutions} WHERE cid='" . $cid . "' AND best=1";
+
+          $queryResult3 =  db_query($query3);
+          
+          $emails = array();
+          
+          while ($tuple2 = db_fetch_object($queryResult3)) {
+              $account = user_load($tuple2->uid);
+              $emails[] = $account->mail;
+          }
+          
+          $mail = array(
+              'id' => 'notification',
+              'to' => implode(', ', $emails),
+              'subject' => 'Competition Deleted',
+              'body' => 'A competition you submitted a solution to has been deleted.',
+              'headers' => array(
+                  'From' => variable_get('site_mail', ini_get('sendmail_from')),
+                  'MIME-Version' => '1.0',
+                  'Content-Type' => 'text/plain; charset=UTF-8; format=flowed; delsp=yes',
+                  'Content-Transfer-Encoding' => '8Bit',
+                  'X-Mailer' => 'Drupal',
+              )
+          );
+          
+          $query4 = "DELETE FROM {solutions} WHERE cid=" . $cid;
+          $queryResult4 = db_query($query4);
+          
+          drupal_mail_send( $mail );
+       }
+       
+       else {
+          drupal_set_message(t('There was an error processing your request.'), 'error');
+       }
+    }
+
+    // Step 1
+    if (empty($form_state['storage']['values'])) {
+        // Define file directories
+    	$datapath = file_directory_path() . '/upload_data/';
+        $datapath .= $cid;
+        $rawpath = $datapath . "/raw";
+        $trainingpath = $datapath . "/training";
+        $testingpath = $datapath . "/testing";
+        $predictionpath = $datapath . "/prediction";
+        $otherpath = $datapath . "/other";
+
+        // Define limits for the submission
+        $limitscsv = array (
+            'extensions' => 'csv',
+            //'file_size' => 1000000, //Integer value in bytes
+        );
+
+        // Validate the file extension and size
+        $validatorscsv = array(
+            'file_validate_extensions' => array($limitscsv['extensions']),
+            //'file_validate_size' => array($limitscsv['file_size']),
+        );
+
+        // Define limits for the submission
+        $limitszip = array (
+            'extensions' => 'zip',
+            //'file_size' => 1000000, //Integer value in bytes
+        );
+
+        // Validate the file extension and size
+        $validatorszip = array(
+            'file_validate_extensions' => array($limitszip['extensions']),
+            //'file_validate_size' => array($limitszip['file_size']),
+        );
+
+        $table = 'competitions';
+        $updatedcompetition = array(
+            'cname' => $form_state['values']['name'],
+            'cdescription' => $form_state['values']['description'],
+        );
+
+        if ($form_state['values']['deadlinecheck']) {
+            $updatedcompetition['cdeadline'] = date(DATE_ATOM, mktime(0, 0, 0,
+                $form_state['values']['deadline']['month'],
+                $form_state['values']['deadline']['day'],
+                $form_state['values']['deadline']['year']));
+        }
+
+        $updatedcompetition['cid'] = $cid;
+
+        // Write updates to the database and check if successful
+        if (drupal_write_record($table, $updatedcompetition, 'cid')) {
+    		drupal_set_message(t('Competition has been updated.'));
+
+            // Check if user wishes to update files.
+            if ($form_state['values']['datacheck']) {
+                // Delete previous files
+                deleteFiles($rawpath);
+                deleteFiles($trainingpath);
+                deleteFiles($testingpath);
+                deleteFiles($predictionpath);
+
+                // Save new file
+                if ($fileraw = file_save_upload('data', $validatorscsv, $rawpath, FILE_EXISTS_ERROR)) {
+                    file_set_status($fileraw, FILE_STATUS_PERMANENT);
+
+                    $form_state['storage']['values'] = $form_state['values'];
+                    $form_state['rebuild'] = TRUE;
+                    $form_state['storage']['values']['cid'] = $updatedcompetition['cid'];
+
+                    $rawfilepath = $rawpath . '/' . $fileraw->filename;
+                    $lines = file($rawfilepath);
+                    $columns = explode(",", $lines[0]);
+
+                    /*
+                    foreach ($columns as $column_num => $column) {
+                        $form_state['storage']['values']['columns'][$column_num] = $column;
+                    }
+                    */
+
+                    $form_state['storage']['values']['datapath'] = $datapath;
+                    $form_state['storage']['values']['fileraw'] = $fileraw->filename;;
+                    $form_state['storage']['values']['step'] = 2;
+
+                    /* Unselect previous submissions */
+                    $query = "SELECT * FROM {solutions} WHERE cid='" . $updatedcompetition['cid'] . "' AND best=1";
+
+                    $queryResult =  db_query($query);
+
+                    $table = 'solutions';
+                    
+                    $emails = array();
+                    
+                    while ($tuple = db_fetch_object($queryResult)) {
+                        $updatedsolution = array(
+                            'sid' => $tuple->sid,
+                            'best' => 0,
+                        );
+                        drupal_write_record($table, $updatedsolution, 'sid');
+
+                        $account = user_load($tuple->uid);
+                        $emails[] = $account->mail;
+                    }
+                    
+                    $mail = array(
+                        'id' => 'notification',
+                        'to' => implode(', ', $emails),
+                        'subject' => 'Competition Update',
+                        'body' => 'The data set for a competition you submitted a solution to has been updated. You will have to resubmit a solution for it to be considered on the leaderboard.',
+                        'headers' => array(
+                            'From' => variable_get('site_mail', ini_get('sendmail_from')),
+                            'MIME-Version' => '1.0',
+                            'Content-Type' => 'text/plain; charset=UTF-8; format=flowed; delsp=yes',
+                            'Content-Transfer-Encoding' => '8Bit',
+                            'X-Mailer' => 'Drupal',
+                        )
+                    );
+                    
+                    
+                }
+            }
+            else if ($form_state['values']['metriccheck']) {
+                $form_state['storage']['values'] = $form_state['values'];
+                $form_state['rebuild'] = TRUE;
+                $form_state['storage']['values']['cid'] = $updatedcompetition['cid'];
+                $form_state['storage']['values']['step'] = 2.5;
+
+                /* Unselect previous submissions */
+                $query = "SELECT * FROM {solutions} WHERE cid='" . $updatedcompetition['cid'] . "' AND best=1";
+
+                    $queryResult =  db_query($query);
+
+                    $table = 'solutions';
+
+                    while ($tuple = db_fetch_object($queryResult)) {
+                        $updatedsolution = array(
+                            'sid' => $tuple->sid,
+                            'best' => 0,
+                        );
+                        drupal_write_record($table, $updatedsolution, 'sid');
+
+                        $account = user_load($tuple->uid);
+                        $emails[] = $account->mail;
+                    }
+
+                    /* Notify Data Scientists about change */
+                    $mail = array(
+                        'id' => 'notification',
+                        'to' => implode(', ', $emails),
+                        'subject' => 'Competition Update',
+                        'body' => 'The evaluation metric for a competition you submitted a solution to has been updated. You will have to resubmit a solution for it to be considered on the leaderboard.',
+                        'headers' => array(
+                            'From' => variable_get('site_mail', ini_get('sendmail_from')),
+                            'MIME-Version' => '1.0',
+                            'Content-Type' => 'text/plain; charset=UTF-8; format=flowed; delsp=yes',
+                            'Content-Transfer-Encoding' => '8Bit',
+                            'X-Mailer' => 'Drupal',
+                        )
+                    );
+            }
+
+            // Check if use wishes to update other files
+            if ($form_state['values']['othercheck']) {
+                // Delete and save new files
+                deleteFiles($otherpath);
+
+                if ($fileother = file_save_upload('other', $validatorszip, $otherpath, FILE_EXISTS_ERROR)) {
+                    file_set_status($fileother, FILE_STATUS_PERMANENT);
+                }
+            }
+            
+            drupal_mail_send( $mail );
+    	}
+    	else {
+    		drupal_set_message(t('There was an error processing your request.'), 'error');
+    	}
+    }
+
+    // Step 2
+    else if ($form_state['storage']['values']['step'] == 2) {
+        $form_state['storage']['values']['step'] = 3;
+        $datapath = $form_state['storage']['values']['datapath'];
+        $fileraw = $form_state['storage']['values']['fileraw'];
+        $form_state['storage']['values']['type'] = $form_state['values']['type'];
+
+        $rawpath = $datapath . "/raw";
+        $trainingpath = $datapath . "/training";
+        $predictionpath = $datapath . "/prediction";
+        $testingpath = $datapath . "/testing";
+        $otherpath = $datapath . "/other";
+
+        $rawfilepath = $rawpath . '/' . $fileraw;
+
+        // Set filepaths for the rest of the files
+        $trainingfilename = $trainingpath . "/training.csv";
+        $testingfilename = $testingpath . "/testing.csv";
+        $predictionfilename = $predictionpath . "/testing.csv";
+
+        // Open the files for writing
+        $ftraining = fopen ($trainingfilename, "w");
+        $ftesting = fopen ($testingfilename, "w");
+        $fprediction = fopen ($predictionfilename, "w");
+
+        $trainingcontents = "";
+        $testingcontents = "";
+        $predictioncontents = "";
+
+        // Get array of all lines in the raw data set
+        $lines = file($rawfilepath);
+
+        // Set column headers in all files
+        $trainingcontents .= $lines[0];
+        $testingcontents .= $lines[0];
+        $predictioncontents .= $lines[0];
+
+        // Remove headers from $lines array
+        unset($lines[0]);
+
+        // Find count of remaining lines
+        $count = count($lines);
+
+        // Get array of which lines to select for testing set
+        $percent = $form_state['values']['percenttest']/100;
+        $set = array_rand($lines, (int) ($count*$percent) );
+
+        // Set value of the prediction area
+        /*
+        $predictionstart = $form_state['values']['predictionstart'];
+        $predictionend = $form_state['values']['predictionend'];
+
+        if ($predictionend == 'same' || $predictionend < $predictionstart) {
+            $predictionend = $predictionstart;
+        }
+        */
+        $predictionstart = 0;
+        $predictionend = $predictionstart;
+
+        $predictionset = explode(",", $lines[0]);
+        for ($i = 0; $i < count($predictionset); $i++) {
+            if ($predictionset[$i] == "|") {
+                $predictionend = $i;
+            }
+        }
+
+        $predictionend++;
+
+        // Loop through $lines array and add data to correct file
+        foreach ($lines as $line_num => $line) {
+
+            if (in_array($line_num, $set)) {
+                $testingcontents .= $line;
+                $columns = explode(",", $line);
+
+                for ($i = $predictionstart; $i <= $predictionend; $i++) {
+                    $columns[$i] = '';
+                }
+
+                $linecorrect = implode(",", $columns);
+
+                $predictioncontents .= $linecorrect;
+            }
+            else {
+                $trainingcontents .= $line;
+            }
+        }
+
+        // Put the contents
+        fputs($ftraining, $trainingcontents);
+        fputs($ftesting, $testingcontents);
+        fputs($fprediction, $predictioncontents);
+
+        fclose($ftraining);
+        fclose($ftesting);
+        fclose($fprediction);
+
+        // Update competition in database
+        $table = 'competitions';
+        $updatedcompetition = array(
+            'cid' => $cid,
+            'predictionstart' => $predictionstart,
+            'predictionend' => $predictionend,
+        );
+        if (drupal_write_record($table, $updatedcompetition, 'cid')) {
+            drupal_set_message(t('Data files created successfully.'));
+        }
+        else {
+            drupal_set_message(t('There was an error processing your request.'), 'error');
+        }
+    }
+
+    else if ($form_state['storage']['values']['step'] == 2.5) {
+        $form_state['storage']['values']['step'] = 3;
+        $form_state['storage']['values']['type'] = $form_state['values']['type'];
+    }
+
+    // Step 3
+    else if ($form_state['storage']['values']['step'] == 3) {
+        // Update competition in database with new metric
+        $table = 'competitions';
+        $updatedcompetition = array(
+            'cid' => $form_state['storage']['values']['cid'],
+            'metric' => $form_state['values']['metric'],
+        );
+        if (drupal_write_record($table, $updatedcompetition, 'cid')) {
+            drupal_set_message(t('Metric selected succesfully.'));
+        }
+        else {
+            drupal_set_message(t('There was an error processing your request.'), 'error');
+        }
+        $form_state['storage']['values'] = null;
+    }
+    else {
+        drupal_set_message(t('There was an error. Please check back later.'), 'error');
+    }
+
+}
+
+/**
+ * Submit solution form. Used to submit a solution to a competition
+ */
+function submit_solution_form() {
+    // Get cid of the competition
+    $cid = getLastPathSegment($_SERVER['REQUEST_URI']);
+
+    // Define the datapath
+    $datapath = file_directory_path() . '/upload_data/';
+    $datapath .= $cid;
+    $testingpath = $datapath . "/testing/testing.csv";
+
+    // Check if the competition has a testing set. Don't allow submissions if it does not.
+    if (file_exists($testingpath)) {
+        $form['#cache'] = TRUE;
+
+        $form['#attributes'] = array(
+        	'enctype' => "multipart/form-data"
+        );
+
+    	$form['solution'] = array(
+    		'#type' => 'file',
+    		'#title' => t('Solution File'),
+    	);
+
+        $form['instructions'] = array(
+            '#type' => 'markup',
+            '#value' => t('<b>Please follow these instructions to set up your solution files: </b>') /*. addLink($instructionspath, 'Instructions')*/ .
+                '<ul>
+                    <li>Follow the testing file template provided by the competition and simply fill in the blanks with your solution.</li>
+                </ul>',
+        );
+
+        $form['description'] = array(
+        	'#type' => 'textarea',
+    		'#title' => t('Brief Description'),
+    	);
+
+        $form['submit'] = array(
+            '#type' => 'submit',
+            '#value' => t('Submit'),
+    	);
+
+    }
+
+    // Set error message if the competition does not have a testing set.
+    else {
+        $form['error'] = array(
+            '#type' => 'markup',
+            '#title' => 'error message',
+            '#value' => t('This competition does not have any datasets. You cannot submit solutions at this time. Please check back later'),
+        );
+    }
+
+	return $form;
+
+}
+
+/**
+ * Handle submit_solution_form submit.
+ */
+function submit_solution_form_submit($form, &$form_state) {
+    // Get the user and cid of the competition
+	global $user;
+	$cid = getLastPathSegment($_SERVER['REQUEST_URI']);
+
+    // Get the best previod solution
+    $squery = "SELECT * FROM {solutions} WHERE cid=" . $cid . " ORDER BY best DESC";
+    $squeryResult = db_query($squery);
+
+    $solutionpath = file_directory_path() . '/upload_solutions/';
+
+    // Define limits for the submission
+    $limits = array (
+        'extensions' => 'csv',
+        //'file_size' => 1000000, //Integer value in bytes
+    );
+
+    // Validate the file extension and size
+    $validators = array(
+        'file_validate_extensions' => array($limits['extensions']),
+        //'file_validate_size' => array($limits['file_size']),
+    );
+
+    $today = getdate();
+    $todayformat = date(DATE_ATOM, mktime($today['hours'],
+        $today['minutes'], $today['seconds'],
+        $today['mon'], $today['mday'], $today['year']));
+
+    // Check whether the user has submitted more than 5 times in 24 hours
+    $datequery = "SELECT COUNT(*) FROM {solutions} WHERE (timestamp <=NOW()) AND (timestamp >= (NOW() - INTERVAL 24 HOUR)) AND cid=" . $cid . " AND uid=" . $user->uid;
+    $datequeryResult = db_query($datequery);
+
+    $n = db_fetch_object($datequeryResult);
+
+    if ($n < 5) {
+        // Write solution to the database
+        $table = 'solutions';
+        $newsolution = array(
+            'timestamp' => date(DATE_ATOM, mktime($today['hours'],
+                $today['minutes'], $today['seconds'],
+                $today['mon'], $today['mday'], $today['year'])),
+            'cid' => $cid,
+            'uid' => $user->uid,
+            'uname' => $user->name,
+            'sdescription' => $form_state['values']['description'],
+        );
+
+        // Check if solution was written successfully
+        if (drupal_write_record($table, $newsolution)) {
+            $solutionpath .= $newsolution['sid'];
+
+            // Creat the data path
+            mkdir($solutionpath);
+
+            // Save solution file to the database and check whether successful
+            if ($file = file_save_upload('solution', $validators, $solutionpath, FILE_EXISTS_ERROR)) {
+                file_set_status($file, FILE_STATUS_PERMANENT);
+                drupal_set_message(t('Solution has been submitted.'));
+            }
+            // If unsuccessful, delete tuple and directory
+            else {
+                $querydelete = "DELETE FROM {solutions} WHERE sid=" . $newsolution['sid'];
+                $resultdelete = db_query($querydelete);
+                deleteDir($solutionpath);
+                drupal_set_message(t('There was an error processing your request.'), 'error');
+            }
+    	}
+    	else {
+    		drupal_set_message(t('There was an error processing your request.'), 'error');
+    	}
+
+        // Check if file was uploaded successfully
+        if ($file) {
+            // Get competition data
+            $query = "SELECT * FROM {competitions} WHERE cid=" . $cid;
+            $queryResult = db_query($query);
+            $tuple = db_fetch_object($queryResult);
+            $predictionstart = $tuple->predictionstart;
+            $predictionend = $tuple->predictionend;
+
+            // Get the filepaths for the testing set and the solution set
+            $testingfile = file_directory_path() . '/upload_data/' . $cid . '/testing/testing.csv';
+            $solutionfile = $solutionpath . '/' . $file->filename;
+
+            // Use the grader to calculate the score
+            $scoreinfo = bootstrap_grader($tuple->metric, 1000, .95, $testingfile, $solutionfile, $predictionstart, $predictionend);
+
+            drupal_set_message(t('Your score was: ') . $scoreinfo["avgscore"] . " with a 95% confidence interval: " . "[" . $scoreinfo["confidence_lower"] . ", " . $scoreinfo["confidence_upper"] . "]");
+
+            // Update solution tuple
+            $newsolution['score'] = $scoreinfo["avgscore"];
+            $newsolution['lower'] = $scoreinfo["confidence_lower"];
+            $newsolution['upper'] = $scoreinfo["confidence_upper"];
+            drupal_write_record($table, $newsolution, 'sid');
+
+            // Check if solution is new best solution and update accordingly
+            if ($stuple = db_fetch_object($squeryResult)) {
+                if ($newsolution['score'] >= $stuple->score) {
+                    $updatedsolution = array(
+                        'sid' => $stuple->sid,
+                        'best' => 0,
+                    );
+                    drupal_write_record($table, $updatedsolution, 'sid');
+                }
+                else {
+                    $newsolution['best'] = 0;
+                    drupal_write_record($table, $newsolution, 'sid');
+                }
+            }
+        }
+    }
+    else {
+        drupal_set_message(t('You can only submit 5 times within 24 hours.'), 'error');
+    }
+
+}
+
+/**
+ * Set URLs
+ */
+function data_competitions_menu() {
+	$items = array();
+
+	// settings page (Used only for resetting of database at the moment)
+	$items['admin/settings/data_competitions'] = array(
+		'title' => 'Data Competitions Settings',
+		'description' => 'Data Competitions settings page',
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('reset_form'),
+		'access arguments' => array('administer data_competitions'),
+		'type' => MENU_NORMAL_ITEM,
+	);
+
+	// List of data competitions
+	$items['data_competitions'] = array(
+		'title' => 'Data Competitions',
+		'description' => 'List of Data Competitions',
+		'page callback' => 'data_competitions_all',
+		'access arguments' => array('access data_competitions'),
+		'type' => MENU_CALLBACK,
+	);
+
+	// Form to create data competitions
+	$items['data_competitions/competitions/create'] = array(
+		'title' => 'Create A Data Competition',
+		'description' => 'Create Data Competitions Page',
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('create_form'),
+		'access arguments' => array('administer data_competitions'),
+		'type' => MENU_CALLBACK,
+	);
+
+    // Data competition details page
+	$items['data_competitions/competitions/details/%'] = array(
+		'title' => 'Competition Details',
+		'description' => 'Competition Details',
+		'page callback' => 'data_competitions_competition_details',
+		'access arguments' => array('access data_competitions'),
+		'type' => MENU_CALLBACK,
+	);
+
+    // Your competitions
+    $items['data_competitions/competitions/your'] = array(
+    	'title' => 'Your Competitions',
+		'description' => 'Your Competitions',
+		'page callback' => 'data_competitions_your',
+		'access arguments' => array('administer data_competitions'),
+		'type' => MENU_CALLBACK,
+	);
+
+    // Your Solutions
+    $items['data_competitions/solutions/your'] = array(
+    	'title' => 'Your Solutions',
+		'description' => 'Your Solutions',
+		'page callback' => 'data_competitions_solutions_your',
+		'access arguments' => array('submit solutions'),
+		'type' => MENU_CALLBACK,
+	);
+
+    // Your Solutions for a specific competition
+    $items['data_competitions/solutions/your/competition/%'] = array(
+        'title' => 'Your Solutions',
+		'description' => 'Your Solutions',
+		'page callback' => 'data_competitions_solutions_competition_your',
+		'access arguments' => array('submit solutions'),
+		'type' => MENU_CALLBACK,
+	);
+
+    // Form to edit competition
+	$items['data_competitions/competitions/edit/%'] = array(
+		'title' => 'Edit Competition',
+		'description' => 'Edit Competition',
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('edit_form'),
+		'access arguments' => array('administer data_competitions'),
+		'type' => MENU_CALLBACK,
+	);
+
+    // Form to submit a solution
+	$items['data_competitions/solutions/submit/%'] = array(
+		'title' => 'Submit Solution',
+		'description' => 'Submit Solution',
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('submit_solution_form'),
+		'access arguments' => array('submit solutions'),
+		'type' => MENU_CALLBACK,
+	);
+
+    // List of solutions for a competitions
+	$items['data_competitions/competitions/solutions/%'] = array(
+		'title' => 'Competition Solutions',
+		'description' => 'Competition Solutions',
+		'page callback' => 'data_competitions_competition_solutions',
+		'access arguments' => array('administer data_competitions'),
+		'type' => MENU_CALLBACK,
+	);
+
+    // Leaderboard
+    $items['data_competitions/leaderboard'] = array(
+    	'title' => 'Leaderboard',
+		'description' => 'Leaderboard',
+		'page callback' => 'data_competitions_leaderboard',
+		'access arguments' => array('access data_competitions'),
+		'type' => MENU_CALLBACK,
+	);
+
+    // Leaderboard for a specific competition
+    $items['data_competitions/leaderboard/competitions/%'] = array(
+        'title' => 'Competition Leaderboard',
+		'description' => 'Competition Leaderboard',
+		'page callback' => 'data_competitions_leaderboard_competition',
+		'access arguments' => array('access data_competitions'),
+		'type' => MENU_CALLBACK,
+	);
+
+	return $items;
+}
+
+/**
+ * MENU_CALLBACK, contents if needed
+ */
+
+function data_competitions_block($op = 'list', $delta = 0, $edit = array()) {
+    global $user;
+	// set up an empty array which will contain the block contents
+	$block = array();
+
+	switch ($op) {
+		case "list":
+			// generate listing of blocks from this module, for the admin/block page
+			$block[0]["info"] = t('Data Competitions');
+			break;
+
+		case "view":
+			// generate block content
+			$block_content = '<ul><li>' . l('Data Competitions', 'data_competitions') . '</li>';
+            $block_content .= '<li>' . l('Leaderboard', 'data_competitions/leaderboard') . '</li>';
+            if (in_array('admin user', array_values($user->roles))) {
+                $block_content .= '<li>' . l('Your Competitions', 'data_competitions/competitions/your') . '</li>';
+            }
+            if (in_array('admin user', array_values($user->roles)) || in_array('authenticated user', array_values($user->roles))) {
+                $block_content .= '<li>' . l('Your Solutions', 'data_competitions/solutions/your') . '</li>';
+            }
+            if (in_array('admin user', array_values($user->roles))) {
+                $block_content .= '<li>' . l('Create a Competition', 'data_competitions/competitions/create') . '</li></ul>';
+            }
+
+
+			// fill in the subject of the block
+			$block['subject'] = 'Data Competitions';
+
+			$block['content'] = $block_content;
+
+			break;
+
+		case "save":
+			break;
+
+		case "configure":
+			break;
+	}
+
+	return $block;
+}
+
+
+/**
+ * Generate competition details page content
+ */
+function data_competitions_competition_details() {
+	global $user;
+
+    $page_content = '';
+
+	$cid = getLastPathSegment($_SERVER['REQUEST_URI']);
+
+	$query = "SELECT * FROM {competitions} WHERE cid='" . $cid . "'";
+	$queryResult =  db_query($query);
+
+	$tuple = db_fetch_object($queryResult);
+
+    $page_content .= '<br /><h1>' . $tuple->cname . '</h1>';
+    $page_content .= '<br /><hr><br />';
+
+    $page_content .= 'Created By: ' . $tuple->uname . '<br />';
+	$page_content .= 'Created On: ' . $tuple->timestamp . '<br />';
+	/*if (!is_null($tuple->cdeadline)) {
+		$page_content .= 'Deadline: ' . substr("'" . $tuple->cdeadline . "'", 1, 10) . '<br />';
+	}
+	else {
+		$page_content .= 'Deadline: None <br />';
+	}*/
+    $page_content .= 'Description: ' . $tuple->cdescription . '<br />';
+	$path = file_directory_path() . "/upload_data/" . $cid;
+    $trainingpath = $path . "/training";
+    $predictionpath = $path . "/prediction";
+    $otherpath = $path . "/other";
+
+    $page_content .= 'Files:<br /><ul>';
+    $page_content .= '<li>' . addLink($trainingpath, 'Training Set') . '</li>';
+    $page_content .= '<li>' . addLink($predictionpath, 'Testing Set') . '</li>';
+    $page_content .= '<li>' . addLink($otherpath, 'Other Files') . '</li></ul>';
+
+    $page_content .= 'Links:<br /><ul>';
+    $page_content .= '<li><a href="/test/data_competitions/leaderboard/competitions/' . $cid . '">Leaderboard</a></li>';
+
+	if ($user->uid == $tuple->uid) {
+		$page_content .= '<li><a href="/test/data_competitions/competitions/solutions/' . $cid . '">See Solutions</a></li></ul>';
+		$page_content .= '<a href="/test/data_competitions/competitions/edit/' . $cid . '">edit</a><br /><br />';
+	}
+    else {
+        $page_content .= '<li><a href="/test/data_competitions/solutions/submit/' . $cid . '">Submit a Solution</a></li>';
+        $page_content .= '<li><a href="/test/data_competitions/solutions/your/competition/' . $cid . '">See your Solutions</a></li></ul>';
+    }
+
+	return $page_content;
+}
+
+/**
+ * Generate list of solutions for a specific competition
+ */
+function data_competitions_competition_solutions() {
+	$page_content = '';
+
+	$cid = getLastPathSegment($_SERVER['REQUEST_URI']);
+
+    $cquery = "SELECT * FROM {competitions} WHERE cid='" . $cid . "'";
+    $cqueryResult =  db_query($cquery);
+
+	$ctuple = db_fetch_object($cqueryResult);
+
+    $page_content .= '<br /><h1>' . $ctuple->cname . '</h1>';
+
+	$query = "SELECT * FROM {solutions} WHERE cid='" . $cid . "' ORDER BY timestamp DESC";
+
+	$queryResult =  db_query($query);
+
+	while ($tuple = db_fetch_object($queryResult)) {
+		$page_content .= '<br /><hr><br />';
+		$page_content .= 'Name: ' . $tuple->uname . '<br />';
+        $page_content .= 'Score: ' . $tuple->score . '<br />';
+        $page_content .= 'Selected: ';
+        if ($tuple->best == 1) {
+            $page_content .= 'YES<br />';
+        }
+        else {
+            $page_content .= 'NO<br />';
+        }
+        $page_content .= 'Description: ' . $tuple->sdescription . '<br />';
+		$path = file_directory_path() . '/upload_solutions/' . $tuple->sid;
+        $page_content .= 'File:<br /><ul>';
+		$page_content .= '<li>' . addLink($path, 'Solution File') . '</li></ul>';
+	}
+
+	if ($page_content == ('<br /><h1>' . $ctuple->cname . '</h1>')) {
+		// no content, let the user know
+		$page_content .= "<br /><hr><br />No solutions to display.";
+	}
+
+	return $page_content;
+
+}
+
+/**
+ * Generate List of Competitions
+ */
+function data_competitions_all() {
+	// content variable that will be returned for display
+	$page_content = '';
+
+	$query = "SELECT * FROM {competitions} ORDER BY timestamp DESC";
+
+	// get the tuple (no range limit here)
+	$queryResult =  db_query($query);
+	while ($tuple = db_fetch_object($queryResult)) {
+		$page_content .= '<br /><hr><br />';
+		$page_content .= 'Name: ' . l($tuple->cname, 'data_competitions/competitions/details/' . $tuple->cid ) . '<br />';
+        $page_content .= 'Created By: ' . $tuple->uname . '<br />';
+		/*if (!is_null($tuple->cdeadline)) {
+			$page_content .= 'Deadline: ' . substr("'" . $tuple->cdeadline . "'", 1, 10) . '<br />';
+		}
+		else {
+			$page_content .= 'Deadline: None <br />';
+		}*/
+        $page_content .= 'Description: ' . $tuple->cdescription . '<br />';
+	}
+
+	// check to see if there was any content before returning the page
+	if ($page_content == '') {
+		// no content, let the user know
+		$page_content = "No competitions to display.";
+	}
+
+	// return the page content
+	return $page_content;
+}
+
+/**
+ * Generate Leaderboard for a specific competition
+ */
+function data_competitions_leaderboard_competition() {
+    $page_content = '';
+
+    $cid = getLastPathSegment($_SERVER['REQUEST_URI']);
+
+    $cquery = "SELECT * FROM {competitions} WHERE cid='" . $cid . "'";
+    $cqueryResult =  db_query($cquery);
+
+	$ctuple = db_fetch_object($cqueryResult);
+
+    $page_content .= '<br /><h1>' . $ctuple->cname . '</h1>';
+
+    $query = "SELECT uname, score FROM {solutions} WHERE best=1 AND cid=" . $cid . " ORDER BY score ASC";
+    $queryResult = db_query($query);
+
+    while($tuple = db_fetch_object($queryResult)) {
+        $page_content .= '<br /><hr><br />';
+    	$page_content .= 'Name: ' . $tuple->uname . '<br />';
+        $page_content .= 'Score: ' . $tuple->score . '<br />';
+    }
+
+	// check to see if there was any content before returning the page
+	if ($page_content == ('<br /><h1>' . $ctuple->cname . '</h1>')) {
+		// no content, let the user know
+		$page_content .= "<br /><hr><br />No leaders to display.";
+	}
+
+	// return the page content
+	return $page_content;
+}
+
+/**
+ * Generate Leaderboard (Test Method Only)
+ */
+function data_competitions_leaderboard() {
+    // content variable that will be returned for display
+    $page_content = '';
+
+    $query = "SELECT * FROM {competitions}";
+    $queryResult = db_query($query);
+    
+    $n = 1;
+    $cleaderboard = array();
+    $leaderboard = array();
+    $fleaderboard = array();
+    while($tuple = db_fetch_object($queryResult)) {
+      $query2 = "SELECT uname, score FROM {solutions} WHERE best=1 AND cid=" . $tuple->cid . " ORDER BY score ASC";
+      $queryResult2 = db_query($query2);
+      while ($tuple2 = db_fetch_object($queryResult2)) {
+        $cleaderboard[$tuple2->uname] = $n;
+        $n++;
+      }
+      
+      $leaderboard[$tuple2->uname] = ($cleaderboard[$tuple2->uname]) / count($cleaderboard);
+      $n = 1;
+    }
+    
+    asort($leaderboard);
+
+    foreach($leaderboard as $uname => $score) {
+        $page_content .= '<br /><hr><br />';
+    	$page_content .= 'Name: ' . $uname . '<br />';
+      $page_content .= 'Total Score: ' . $score . '<br />';
+    }
+
+	// check to see if there was any content before returning the page
+	if ($page_content == '') {
+		// no content, let the user know
+		$page_content = "No leaders to display.";
+	}
+
+	// return the page content
+	return $page_content;
+}
+
+/**
+ * Generate list of your competitions
+ */
+function data_competitions_your() {
+    global $user;
+    $page_content = '';
+
+    $query = "SELECT * FROM {competitions} WHERE uid=" . $user->uid . " ORDER BY timestamp DESC";
+	$queryResult = db_query($query);
+
+	while ($tuple = db_fetch_object($queryResult)) {
+		$page_content .= '<br /><hr><br />';
+		$page_content .= 'Name: ' . l($tuple->cname, 'data_competitions/competitions/details/' . $tuple->cid ) . '<br />';
+		/*if (!is_null($tuple->cdeadline)) {
+			$page_content .= 'Deadline: ' . substr("'" . $tuple->cdeadline . "'", 1, 10) . '<br />';
+		}
+		else {
+			$page_content .= 'Deadline: None <br />';
+		}*/
+        $page_content .= 'Description: ' . $tuple->cdescription . '<br />';
+	}
+
+	if ($page_content == '') {
+		$page_content = "No competitions to display.";
+	}
+
+	return $page_content;
+}
+
+/**
+ * Generate list of your solutions
+ */
+function data_competitions_solutions_your() {
+    global $user;
+    $page_content = '';
+
+	$query = "SELECT * FROM {solutions} WHERE uid=" . $user->uid . " ORDER BY timestamp DESC";
+	$queryResult =  db_query($query);
+
+	while ($tuple = db_fetch_object($queryResult)) {
+        $cquery = "SELECT * FROM {competitions} WHERE cid=" . $tuple->cid;
+        $cqueryResult =  db_query($cquery);
+        $ctuple = db_fetch_object($cqueryResult);
+
+		$page_content .= '<br /><hr><br />';
+		$page_content .= 'Competition Name: ' . l($ctuple->cname, 'data_competitions/competitions/details/' . $ctuple->cid ) . '<br />';
+        $page_content .= 'Score: ' . $tuple->score . '<br />';
+        $page_content .= 'Selected: ';
+        if ($tuple->best == 1) {
+            $page_content .= 'YES<br />';
+        }
+        else {
+            $page_content .= 'NO<br />';
+        }
+        $page_content .= 'Solution Description: ' . $tuple->sdescription . '<br />';
+		$path = file_directory_path() . '/upload_solutions/' . $tuple->sid;
+        $page_content .= 'File:<br /><ul>';
+    	$page_content .= '<li>' . addLink($path, 'Solution File') . '</li></ul>';
+	}
+
+	if ($page_content == '') {
+		$page_content = "No solutions to display.";
+	}
+
+	return $page_content;
+}
+
+/**
+ * Generate list of your solutions for a specific competitions
+ */
+function data_competitions_solutions_competition_your() {
+    global $user;
+    $cid = getLastPathSegment($_SERVER['REQUEST_URI']);
+    $page_content = '';
+
+    $cquery = "SELECT * FROM {competitions} WHERE cid='" . $cid . "'";
+    $cqueryResult =  db_query($cquery);
+
+    $ctuple = db_fetch_object($cqueryResult);
+
+    $page_content .= '<br /><h1>' . $ctuple->cname . '</h1>';
+
+    $query = "SELECT * FROM {solutions} WHERE uid=" . $user->uid . " AND cid=" . $cid . " ORDER BY timestamp DESC";
+	$queryResult =  db_query($query);
+
+	while ($tuple = db_fetch_object($queryResult)) {
+		$page_content .= '<br /><hr><br />';
+        $page_content .= 'Score: ' . $tuple->score . '<br />';
+        $page_content .= 'Selected: ';
+        if ($tuple->best == 1) {
+            $page_content .= 'YES<br />';
+        }
+        else {
+            $page_content .= 'NO<br />';
+        }
+        $page_content .= 'Solution Description: ' . $tuple->sdescription . '<br />';
+		$path = file_directory_path() . '/upload_solutions/' . $tuple->sid;
+        $page_content .= 'File:<br /><ul>';
+    	$page_content .= '<li>' . addLink($path, 'Solution File') . '</li></ul>';
+	}
+
+	if ($page_content == ('<br /><h1>' . $ctuple->cname . '</h1>')) {
+		$page_content .= "<br /><hr><br />No solutions to display.";
+	}
+
+	return $page_content;
+}
+
+/**
+ * Extra Functions
+ */
+
+// Get the last path segment of the url (used to determine cid)
+function getLastPathSegment($url) {
+    $path = parse_url($url, PHP_URL_PATH); // to get the path from a whole URL
+    $pathTrimmed = trim($path, '/'); // normalise with no leading or trailing slash
+    $pathTokens = explode('/', $pathTrimmed); // get segments delimited by a slash
+
+    return end($pathTokens); // get the last segment
+}
+
+// Function to recursively delete files in a directory
+function deleteFiles($dirPath) {
+    if (! is_dir($dirPath)) {
+        throw new InvalidArgumentException("$dirPath must be a directory");
+    }
+    if (substr($dirPath, strlen($dirPath) - 1, 1) != '/') {
+        $dirPath .= '/';
+    }
+    $files = glob($dirPath . '*', GLOB_MARK);
+    foreach ($files as $file) {
+        if (is_dir($file)) {
+            deleteDir($file);
+        } else {
+            unlink($file);
+        }
+    }
+}
+
+// Adds a link to a file
+function addLink($dirPath, $linkName) {
+    if (! is_dir($dirPath)) {
+        throw new InvalidArgumentException("$dirPath must be a directory");
+    }
+    if (substr($dirPath, strlen($dirPath) - 1, 1) != '/') {
+        $dirPath .= '/';
+    }
+    $files = glob($dirPath . '*', GLOB_MARK);
+    foreach ($files as $file) {
+        $fileurl = file_create_url($file);
+        return '<a href="' . $fileurl . '">' . $linkName . '</a>';
+    }
+}
+
+// Recursively deletes a directory
+function deleteDir($dirPath) {
+    if (! is_dir($dirPath)) {
+        throw new InvalidArgumentException("$dirPath must be a directory");
+    }
+    if (substr($dirPath, strlen($dirPath) - 1, 1) != '/') {
+        $dirPath .= '/';
+    }
+    $files = glob($dirPath . '*', GLOB_MARK);
+    foreach ($files as $file) {
+        if (is_dir($file)) {
+            deleteDir($file);
+        } else {
+            unlink($file);
+        }
+    }
+    rmdir($dirPath);
+}
+
+function bootstrap_grader($metric, $n, $percent, $testingfile, $solutionfile, $predictionstart, $predictionend) {
+    $testlines = file($testingfile);
+    $solutionlines = file($solutionfile);
+
+    unset($testlines[0]);
+    unset($solutionlines[0]);
+
+    $count = count($testlines);
+    $scores = array();
+
+    // Begin Bootstrapping
+    for ($i = 1; $i <= $n; $i++) {
+        // Get array of which lines to select
+        $set = array();
+        for ($j = 0; $j < (int) ($count*$percent); $j++) {
+            $set[$j] = array_rand($testlines, 1);
+        }
+
+        //drupal_set_message(count($set));
+
+        /**
+         * Check Metric(s) here and use metrics.php to score the solution
+         */
+        switch ($metric) {
+            case 1:
+                $scores[$i] = ae($testingfile, $solutionfile, $predictionstart, $predictionend, $set);
+                break;
+            case 2:
+                $scores[$i] = mae($testingfile, $solutionfile, $predictionstart, $predictionend, $set);
+                break;
+            case 3:
+                $scores[$i] = rmse($testingfile, $solutionfile, $predictionstart, $predictionend, $set);
+                break;
+            case 4:
+                $scores[$i] = rmsle($testingfile, $solutionfile, $predictionstart, $predictionend, $set);
+                break;
+            case 5:
+                $scores[$i] = logloss($testingfile, $solutionfile, $predictionstart, $predictionend, $set);
+                break;
+            case 6:
+                $scores[$i] = auc($testingfile, $solutionfile, $predictionstart, $predictionend, $set);
+                break;
+            case 7:
+                $scores[$i] = mfs($testingfile, $solutionfile, $predictionstart, $predictionend, $set);
+                break;
+            case 8:
+                $scores[$i] = mce($testingfile, $solutionfile, $predictionstart, $predictionend, $set);
+                break;
+            case 9:
+                $scores[$i] = mapn($testingfile, $solutionfile, $predictionstart, $predictionend, $set);
+                break;
+            case 10:
+                $scores[$i] = mcll($testingfile, $solutionfile, $predictionstart, $predictionend, $set);
+                break;
+            case 11:
+                $scores[$i] = hl($testingfile, $solutionfile, $predictionstart, $predictionend, $set);
+                break;
+            default:
+                drupal_set_message(t('There was an error. Please check back later.'));
+        }
+    }
+
+    $scoreinfo = array();
+    $scoreinfo["avgscore"] = array_sum($scores) / count($scores);
+    // Edit this
+    //$scoreinfo["confidence_interval"] = 0;
+    //drupal_set_message(count($scores));
+
+    $upper_bound = $scoreinfo["avgscore"] + (1.65*sqrt(variance($scores)) / sqrt(count($scores)));
+    $lower_bound = $scoreinfo["avgscore"] - (1.65*sqrt(variance($scores)) / sqrt(count($scores)));
+    $scoreinfo["confidence_upper"] = $upper_bound;
+    $scoreinfo["confidence_lower"] = $lower_bound;
+
+    return $scoreinfo;
+}
+
+function average($arr) {
+    if (!count($arr)) return 0;
+
+    $sum = 0;
+    for ($i = 0; $i < count($arr); $i++)
+    {
+        $sum += $arr[$i];
+    }
+
+    return $sum / count($arr);
+}
+
+function variance($arr) {
+    if (!count($arr)) return 0;
+
+    $mean = average($arr);
+
+    $sos = 0;    // Sum of squares
+    for ($i = 0; $i < count($arr); $i++)
+    {
+        $sos += ($arr[$i] - $mean) * ($arr[$i] - $mean);
+    }
+
+    return $sos / (count($arr)-1);  // denominator = n-1; i.e. estimating based on sample 
+                                    // n-1 is also what MS Excel takes by default in the
+                                    // VAR function
+}

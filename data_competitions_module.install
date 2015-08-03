@@ -1,0 +1,147 @@
+<?php
+// $Id$
+
+/**
+ * Install the data_competitions module, including it's content (node)
+ * type.
+ * @file
+ */
+require_once('data_competitions.module');
+
+function data_competitions_install() {
+	$datapath = file_directory_path() . '/upload_data';
+	$solutionpath = file_directory_path() . '/upload_solutions';
+    $instructionspath = file_directory_path() . '/data_set_instructions';
+	// $imagepath = file_directory_path() . '/upload_images';
+
+    // deleteDir($datapath);
+
+    drupal_install_schema('data_competitions');
+    db_query("DELETE FROM {cache}");
+
+	mkdir($datapath);
+	mkdir($solutionpath);
+    mkdir($instructionspath);
+	// mkdir($imagepath);
+
+
+    $instructionsfilename = $instructionspath . '/template.csv';
+
+    $finstructions = fopen($instructionsfilename, "w");
+    $instructionscontents = "Column 1 Header,Column 2 Header,,Column 3 Header,Column 4 Header,etc\nLabel 1,Label 2,|,Data 1,Data 2,etc.\nLabel 3,Label 4,|,Data 3, Data 4, etc.\nFor AUC\nLabel 1,Label 2,break,Label 3,Label 4,etc.\n";
+
+    fputs($finstructions, $instructionscontents);
+
+    fclose($finstructions);
+
+
+}
+
+function data_competitions_uninstall() {
+	$datapath = file_directory_path() . '/upload_data';
+	$solutionpath = file_directory_path() . '/upload_solutions';
+    $instructionspath = file_directory_path() . '/data_set_instructions';
+	// $imagepath = file_directory_path() . '/upload_images';
+
+	drupal_uninstall_schema('data_competitions');
+
+	// Permissions
+	// chmod("/somedir/somefile", 755);
+
+	deleteDir($datapath);
+	deleteDir($solutionpath);
+    deleteDir($instructionspath);
+	// rmdir($imagepath);
+}
+
+function data_competitions_schema() {
+	$schema = array();
+    $schema['competitions'] = array(
+		'description' => t('The base table for competitions.'),
+        'fields' => array(
+            'cid' => array(
+				'description' => t('Competition ID'),
+				'type' => 'serial',
+				'unsigned' => TRUE,
+				'not null' => TRUE),
+			'uid' => array(
+				'description' => t('User ID'),
+				'type' => 'int',
+				'not null' => TRUE),
+            'uname' => array(
+    			'description' => t('User Name'),
+				'type' => 'varchar',
+				'length' => 255),
+            'timestamp' => array(
+				'description' => t('Datetimestamp'),
+				'type' => 'datetime'),
+			'cname' => array(
+				'description' => t('Competition Name'),
+				'type' => 'varchar',
+				'length' => 255),
+			'cdescription' => array(
+				'description' => t('Brief Description'),
+				'type' => 'varchar',
+				'length' => 1000),
+			'cdeadline' => array(
+				'description' => t('Competition Deadline'),
+				'type' => 'datetime'),
+            'predictionstart' => array(
+    			'description' => t('Prediction Start'),
+				'type' => 'int'),
+            'predictionend' => array(
+        		'description' => t('Prediction End'),
+				'type' => 'int'),
+            'metric' => array(
+                'description' => t('Competition Metric'),
+                'type' => 'int'),
+		),
+        'primary key' => array('cid'),
+	);
+
+	$schema['solutions'] = array(
+		'description' => t('The base table for solutions.'),
+        'fields' => array(
+            'sid' => array(
+				'description' => t('Solution ID'),
+				'type' => 'serial',
+				'unsigned' => TRUE,
+				'not null' => TRUE),
+			'cid' => array(
+				'description' => t('Competition ID'),
+				'type' => 'int',
+				'not null' => TRUE),
+			'uid' => array(
+				'description' => t('User ID'),
+				'type' => 'int',
+				'not null' => TRUE),
+            'timestamp' => array(
+				'description' => t('Datetimestamp'),
+				'type' => 'datetime'),
+			'uname' => array(
+				'description' => t('User Name'),
+				'type' => 'varchar',
+				'length' => 255),
+			'sdescription' => array(
+				'description' => t('Solution Description'),
+				'type' => 'varchar',
+				'length' => 1000),
+      'score' => array(
+        'description' => t('Solution Score'),
+    		'type' => 'float'),
+      'best' => array(
+        'description' => t('Best Score'),
+        'type' => 'int',
+        'default' => 1),
+      'upper' => array(
+        'description' => t('Confidence Upper Bound'),
+        'type' => 'float'),
+      'lower' => array(
+        'description' => t('Confidence Lower Bound'),
+        'type' => 'float'),
+		),
+        'primary key' => array('sid'),
+	);
+
+    return $schema;
+}

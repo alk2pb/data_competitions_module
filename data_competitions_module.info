@@ -1,0 +1,5 @@
+"name = Data Competitions Module" 
+description = Sets up a data competition platform.
+core = 6.x
+package = Test
+version = 1.0
